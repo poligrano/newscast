@@ -1,5 +1,8 @@
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize)]
 pub struct Entry<I: Default + Eq>
 {
     addr: SocketAddr,
