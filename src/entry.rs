@@ -3,14 +3,15 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
-pub struct Entry<I: Default + Eq>
+#[serde(bound = "I: Default + Eq + Serialize, for<'a> I: Deserialize<'a>")]
+pub struct Entry<I> where I: Default + Eq + Serialize, for<'a> I: Deserialize<'a>
 {
     addr: SocketAddr,
     timestamp: i64,
     item: I
 }
 
-impl<I: Default + Eq> Entry<I> 
+impl<I> Entry<I> where I: Default + Eq + Serialize, for<'a> I: Deserialize<'a>
 {
     pub fn new(addr: SocketAddr, timestamp: i64, item: I) -> Self
     {
@@ -28,9 +29,13 @@ impl<I: Default + Eq> Entry<I>
     {
         &self.item
     }
+    pub fn is_valid(&self) -> bool
+    {
+        self.addr.ip().is_unspecified()
+    }
 }
 
-impl<I: Default + Eq> Default for Entry<I> 
+impl<I> Default for Entry<I> where I: Default + Eq + Serialize, for<'a> I: Deserialize<'a>
 {
     fn default() -> Self 
     {
