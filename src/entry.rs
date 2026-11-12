@@ -1,13 +1,13 @@
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
-pub struct Entry<I: Default>
+pub struct Entry<I: Default + Eq>
 {
     addr: SocketAddr,
     timestamp: i64,
     item: I
 }
 
-impl<I: Default> Entry<I> 
+impl<I: Default + Eq> Entry<I> 
 {
     pub fn new(addr: SocketAddr, timestamp: i64, item: I) -> Self
     {
@@ -27,7 +27,7 @@ impl<I: Default> Entry<I>
     }
 }
 
-impl<I: Default> Default for Entry<I> 
+impl<I: Default + Eq> Default for Entry<I> 
 {
     fn default() -> Self 
     {
