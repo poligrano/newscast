@@ -14,7 +14,7 @@ const MAX_DATAGRAM: usize = 1400;
 /// [Newscast computing]: https://www.distributed-systems.net/my-data/papers/wip-newscast.pdf
 pub struct Newspaper<const C: usize, I> where I: Default + Clone + Send + Sync + 'static + Serialize, for<'de> I: Deserialize<'de>
 {
-    item: I,
+    id: I,
     cache: Arc<RwLock<[Entry<I>; C]>>
 }
 
@@ -29,9 +29,9 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync +
         }
         cache
     }
-    pub fn bind<const B: usize>(item: I, bootstraps: [Entry<I>; B]) -> Self
+    pub fn bind<const B: usize>(id: I, bootstraps: [Entry<I>; B]) -> Self
     {
-        Self { item: item, cache: Arc::new(RwLock::new(Self::init_cache(bootstraps))) }
+        Self { id: id, cache: Arc::new(RwLock::new(Self::init_cache(bootstraps))) }
     } 
     fn build_cache_buf(tag: Tag, own: &Entry<I>, cache: &[Entry<I>; C], to_ignore: SocketAddr, buf: &mut[u8; MAX_DATAGRAM]) -> postcard::Result<usize>
     {
@@ -51,7 +51,7 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync +
     {
         cache.iter().filter(|e| e.is_valid()).choose(&mut rand::rng()).map(|e| *e.addr())
     }
-    async fn send_cache(socket: &UdpSocket, item: I, cache: &RwLock<[Entry<I>; C]>) -> io::Result<()>
+    async fn send_cache(udp: &UdpSocket, id: I, cache: &RwLock<[Entry<I>; C]>) -> io::Result<()>
     {
         let mut buf: [u8; MAX_DATAGRAM] = [0u8; MAX_DATAGRAM];
         let (dest, len): (SocketAddr, usize) = {
@@ -60,11 +60,11 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync +
                 Some(e) => e,
                 None => return Ok(())
             };
-            let len: usize = Self::build_cache_buf(Tag::Send, &Entry::new(socket.local_addr()?, Utc::now().timestamp_millis(), item), &guard, dest, &mut buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+            let len: usize = Self::build_cache_buf(Tag::Send, &Entry::new(udp.local_addr()?, Utc::now().timestamp_millis(), id), &guard, dest, &mut buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
             (dest, len)
         };
         println!("Sending to {dest}");
-        socket.send_to(&buf[..len], dest).await?;
+        udp.send_to(&buf[..len], dest).await?;
         Ok(())
     }
     fn aggregate(own_cache: [Entry<I>; C], rec_cache: Vec<Entry<I>>) -> [Entry<I>; C]
@@ -91,19 +91,19 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync +
         *guard = Self::aggregate(old, rec_cache);
         Ok(())
     }
-    async fn respond_cache(socket: &UdpSocket, item: I, sender: SocketAddr, buf: &[u8], cache: &RwLock<[Entry<I>; C]>) -> io::Result<()>
+    async fn respond_cache(udp: &UdpSocket, id: I, sender: SocketAddr, buf: &[u8], cache: &RwLock<[Entry<I>; C]>) -> io::Result<()>
     {
         let mut to_send = [0u8; MAX_DATAGRAM];
-        let len = Self::build_cache_buf(Tag::Response, &Entry::new(socket.local_addr()?, Utc::now().timestamp_millis(), item), &*cache.read().await, sender, &mut to_send).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        socket.send_to(&to_send[..len], sender).await?;
+        let len = Self::build_cache_buf(Tag::Response, &Entry::new(udp.local_addr()?, Utc::now().timestamp_millis(), id), &*cache.read().await, sender, &mut to_send).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        udp.send_to(&to_send[..len], sender).await?;
         Self::receive_cache(buf, cache).await.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
     }
-    async fn decode(socket: &UdpSocket, item: I, buf: &[u8], cache: &RwLock<[Entry<I>; C]>, sender: SocketAddr) -> io::Result<()>
+    async fn decode(udp: &UdpSocket, id: I, buf: &[u8], cache: &RwLock<[Entry<I>; C]>, sender: SocketAddr) -> io::Result<()>
     {
         match Tag::try_from(buf.get(..TAG_LEN).ok_or(io::Error::new(io::ErrorKind::InvalidData, tag::Error::new("Datagram too short".to_owned())))?).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))? {
             Tag::Send => {
                 println!("Responding to {sender}");
-                Self::respond_cache(socket, item, sender, &buf[tag::TAG_LEN..], cache).await?
+                Self::respond_cache(udp, id, sender, &buf[tag::TAG_LEN..], cache).await?
             },
             Tag::Response => {
                 println!("Received response from {sender}");
@@ -116,7 +116,7 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync +
     pub fn connect<A: ToSocketAddrs + Send + Sync + 'static>(&self, socket: A) -> JoinHandle<io::Result<()>>
     {
         let cache: Arc<RwLock<[Entry<I>; C]>> = self.cache.clone();
-        let item: I = self.item.clone();
+        let id: I = self.id.clone();
         tokio::spawn(async move {
             let mut ticker: Interval = time::interval(Duration::from_secs(5));
             let udp: UdpSocket = UdpSocket::bind(socket).await?;
@@ -126,9 +126,9 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync +
                 if let Err(e) = tokio::select! {
                     res = udp.recv_from(&mut buf) => {
                         let (len, sender) = res?;
-                        Self::decode(&udp, item.clone(), &buf[..len], &cache, sender).await
+                        Self::decode(&udp, id.clone(), &buf[..len], &cache, sender).await
                     }
-                    _ = ticker.tick() => Self::send_cache(&udp, item.clone(), &cache).await
+                    _ = ticker.tick() => Self::send_cache(&udp, id.clone(), &cache).await
                 }
                 {
                     eprintln!("{e}");
