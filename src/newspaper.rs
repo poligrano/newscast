@@ -1,9 +1,9 @@
-use std::{array, cmp::Reverse, collections::HashSet, error::Error, mem, net::SocketAddr, sync::Arc, time::Duration};
+use std::{array, cmp::Reverse, collections::HashSet, error::Error, fmt::Debug, mem, net::SocketAddr, sync::Arc, time::Duration};
 use itertools::Itertools;
 use chrono::Utc;
 use rand::seq::IteratorRandom;
 use serde::{Deserialize, Serialize};
-use tokio::{io, net::UdpSocket, sync::RwLock, task::JoinHandle, time::{self, Interval, MissedTickBehavior}};
+use tokio::{io, net::{ToSocketAddrs, UdpSocket}, sync::RwLock, task::JoinHandle, time::{self, Interval, MissedTickBehavior}};
 
 use crate::{entry::Entry, tag::{self, TAG_LEN, Tag::self}};
 
@@ -13,13 +13,13 @@ const MAX_DATAGRAM: usize = 1400;
 /// [Newscast computing]
 /// 
 /// [Newscast computing]: https://www.distributed-systems.net/my-data/papers/wip-newscast.pdf
-pub struct Newspaper<const C: usize, I> where I: Default + Eq + Serialize + Clone + Send + Sync + 'static, for<'a> I: Deserialize<'a>
+pub struct Newspaper<const C: usize, I> where I: Default + Eq + Serialize + Clone + Send + Sync + Debug + 'static, for<'a> I: Deserialize<'a>
 {
     item: I,
     cache: Arc<RwLock<[Entry<I>; C]>>
 }
 
-impl<const C: usize, I> Newspaper<C, I> where I: Default + Eq + Serialize + Clone + Send + Sync + 'static, for<'a> I: Deserialize<'a>
+impl<const C: usize, I> Newspaper<C, I> where I: Default + Eq + Serialize + Clone + Send + Sync + Debug + 'static, for<'a> I: Deserialize<'a>
 {
     fn init_cache<const B: usize>(bootstraps: [Entry<I>; B]) -> [Entry<I>; C]
     {
@@ -51,6 +51,7 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Eq + Serialize + Clon
     }
     fn pick_random_valid_address(cache: &[Entry<I>; C]) -> Option<SocketAddr>
     {
+        println!("{:?}", cache.iter().filter(|e| e.is_valid()).collect_vec());
         cache.iter().filter(|e| e.is_valid()).choose(&mut rand::rng()).map(|e| *e.addr())
     }
     async fn send_cache(socket: &UdpSocket, item: I, cache: &RwLock<[Entry<I>; C]>) -> io::Result<()>
@@ -58,13 +59,14 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Eq + Serialize + Clon
         let mut buf: [u8; MAX_DATAGRAM] = [0u8; MAX_DATAGRAM];
         let (dest, len): (SocketAddr, usize) = {
             let guard = cache.read().await;
-            let dest: SocketAddr = match guard.iter().filter(|e| e.is_valid()).choose(&mut rand::rng()) {
-                Some(e) => *e.addr(),
+            let dest: SocketAddr = match Self::pick_random_valid_address(&guard) {
+                Some(e) => e,
                 None => return Ok(())
             };
             let len: usize = Self::build_cache_buf(Tag::Send, &Entry::new(socket.local_addr()?, Utc::now().timestamp_millis(), item), &guard, dest, &mut buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
             (dest, len)
         };
+        println!("Dest: {dest}");
         socket.send_to(&buf[..len], dest).await?;
         Ok(())
     }
@@ -94,14 +96,12 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Eq + Serialize + Clon
     }
     async fn respond_cache(socket: &UdpSocket, item: I, sender: SocketAddr, buf: &[u8], cache: &RwLock<[Entry<I>; C]>) -> io::Result<()>
     {
-        let mut to_send: [u8; MAX_DATAGRAM] = [0u8; MAX_DATAGRAM];
-        let guard = cache.write().await;
-        let len: usize = Self::build_cache_buf(Tag::Response, &Entry::new(socket.local_addr()?, Utc::now().timestamp_millis(), item), &guard, sender, &mut to_send).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let mut to_send = [0u8; MAX_DATAGRAM];
+        let len = Self::build_cache_buf(Tag::Response, &Entry::new(socket.local_addr()?, Utc::now().timestamp_millis(), item), &*cache.read().await, sender, &mut to_send).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         socket.send_to(&to_send[..len], sender).await?;
-        Self::receive_cache(buf, cache).await.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        Ok(())
+        Self::receive_cache(buf, cache).await.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
     }
-    pub fn connect(&self, socket: SocketAddr) -> JoinHandle<io::Result<()>>
+    pub fn connect<A: ToSocketAddrs + Send + Sync + 'static>(&self, socket: A) -> JoinHandle<io::Result<()>>
     {
         let cache: Arc<RwLock<[Entry<I>; C]>> = self.cache.clone();
         let item: I = self.item.clone();
@@ -120,7 +120,10 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Eq + Serialize + Clon
                         }
                     }
                     _ = ticker.tick() => {
-                        Self::send_cache(&udp, item.clone(), &cache).await?;
+                        if let Err(e) = Self::send_cache(&udp, item.clone(), &cache).await
+                        {
+                            eprintln!("{e}")
+                        }
                     }
                 }
             }
@@ -128,8 +131,8 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Eq + Serialize + Clon
     }
     async fn decode(socket: &UdpSocket, item: I, buf: &[u8], cache: &RwLock<[Entry<I>; C]>, sender: SocketAddr) -> Result<(), Box<dyn Error>>
     {
-        match Tag::try_from(&buf[..TAG_LEN])? {
-            Tag::Send => Self::respond_cache(socket, item, sender, buf, cache).await?,
+        match Tag::try_from(buf.get(..TAG_LEN).ok_or("Datagram too short")?)? {
+            Tag::Send => Self::respond_cache(socket, item, sender, &buf[tag::TAG_LEN..], cache).await?,
             Tag::Response => Self::receive_cache(&buf[tag::TAG_LEN..], cache).await?,
             Tag::Plain => todo!()
         };

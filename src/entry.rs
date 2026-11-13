@@ -1,16 +1,16 @@
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::{fmt::Debug, net::{Ipv4Addr, SocketAddr, SocketAddrV4}};
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
-pub struct Entry<I> where I: Default
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Entry<I> where I: Default + Debug
 {
     addr: SocketAddr,
     timestamp: i64,
     item: I
 }
 
-impl<I> Entry<I> where I: Default
+impl<I> Entry<I> where I: Default + Debug
 {
     pub fn new(addr: SocketAddr, timestamp: i64, item: I) -> Self
     {
@@ -30,11 +30,11 @@ impl<I> Entry<I> where I: Default
     }
     pub fn is_valid(&self) -> bool
     {
-        self.addr.ip().is_unspecified()
+        !self.addr.ip().is_unspecified() && self.addr.port() != 0
     }
 }
 
-impl<I> Default for Entry<I> where I: Default
+impl<I> Default for Entry<I> where I: Default + Debug
 {
     fn default() -> Self 
     {
