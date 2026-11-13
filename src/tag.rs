@@ -1,7 +1,5 @@
-use crate::tagerror::TagError;
-
 pub const TAG_LEN: usize = 3;
-pub type Error = TagError;
+pub type Error = tagerror::TagError;
 
 const SEND_BSTR: &[u8; TAG_LEN] = b"SND";
 const RESPONSE_BSTR: &[u8; TAG_LEN] = b"RSP";
@@ -28,7 +26,7 @@ impl Into<&'static[u8; TAG_LEN]> for Tag
 
 impl TryFrom<&[u8]> for Tag
 {
-    type Error = TagError;
+    type Error = Error;
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> 
     {
         let arr: &[u8; TAG_LEN] = value.try_into().map_err(|_| Self::Error::new(format!("Invalid TAG length: {:?}", value)))?;
@@ -39,4 +37,33 @@ impl TryFrom<&[u8]> for Tag
             _ => Err(Self::Error::new(format!("Unrecognised TAG: {:?}", value))),
         }
     }   
+}
+
+mod tagerror
+{
+    use std::{error::Error, fmt::Display};
+
+    #[derive(Debug)]
+    pub struct TagError
+    {
+        desc: String
+    }
+
+    impl Display for TagError 
+    {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result 
+        {
+            write!(f, "{}", self.desc)
+        }
+    }
+
+    impl Error for TagError {}
+
+    impl TagError
+    {
+        pub fn new(desc: String) -> Self
+        {
+            Self { desc: desc }
+        }
+    }
 }

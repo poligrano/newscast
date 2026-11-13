@@ -2,10 +2,9 @@ use std::{env, net::SocketAddr, str::FromStr};
 use local_ip_address::local_ip;
 use crate::{entry::Entry, newspaper::Newspaper};
 
-mod newspaper;
-mod entry;
+pub mod newspaper;
+pub mod entry;
 mod tag;
-mod tagerror;
 
 const C: usize = 20;
 const BOOTSTRAP_SOCKET: &str = "192.168.0.114:20209";
