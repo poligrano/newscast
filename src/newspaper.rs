@@ -124,10 +124,10 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync +
             loop {
                 let mut buf: [u8; MAX_DATAGRAM] = [0u8; MAX_DATAGRAM];
                 if let Err(e) = tokio::select! {
-                    res = udp.recv_from(&mut buf) => {
-                        let (len, sender) = res?;
-                        Self::decode(&udp, id.clone(), &buf[..len], &cache, sender).await
-                    }
+                    res = udp.recv_from(&mut buf) => match res {
+                        Ok((len, sender)) => Self::decode(&udp, id.clone(), &buf[..len], &cache, sender).await,
+                        Err(e) => Err(e)
+                    },
                     _ = ticker.tick() => Self::send_cache(&udp, id.clone(), &cache).await
                 }
                 {
