@@ -2,6 +2,10 @@ use crate::tagerror::TagError;
 
 pub const TAG_LEN: usize = 3;
 
+const SEND_BSTR: &[u8; TAG_LEN] = b"SND";
+const RESPONSE_BSTR: &[u8; TAG_LEN] = b"RSP";
+const PLAIN_BSTR: &[u8; TAG_LEN] = b"PLN";
+
 pub enum Tag
 {
     Send,
@@ -9,14 +13,14 @@ pub enum Tag
     Plain
 }
 
-impl Into<[u8; TAG_LEN]> for Tag
+impl Into<&'static[u8; TAG_LEN]> for Tag
 {
-    fn into(self) -> [u8; TAG_LEN] 
+    fn into(self) -> &'static[u8; TAG_LEN] 
     {
         match self {
-            Self::Send => b"SND".to_owned(),
-            Self::Response => b"RSP".to_owned(),
-            Self::Plain => b"PLN".to_owned()
+            Self::Send => SEND_BSTR,
+            Self::Response => RESPONSE_BSTR,
+            Self::Plain => PLAIN_BSTR
         }    
     }
 }
@@ -26,11 +30,12 @@ impl TryFrom<&[u8]> for Tag
     type Error = TagError;
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> 
     {
-        match value {
-            b"SND" => Ok(Self::Send),
-            b"RSP" => Ok(Self::Response),
-            b"PLN" => Ok(Self::Plain),
-            _ => Err(TagError::new(format!("Unrecognised TAG: {:?}", value)))
+        let arr: &[u8; TAG_LEN] = value.try_into().map_err(|_| Self::Error::new(format!("Invalid TAG length: {:?}", value)))?;
+        match arr {
+            SEND_BSTR => Ok(Self::Send),
+            RESPONSE_BSTR => Ok(Self::Response),
+            PLAIN_BSTR => Ok(Self::Plain),
+            _ => Err(Self::Error::new(format!("Unrecognised TAG: {:?}", value))),
         }
     }   
 }

@@ -34,13 +34,12 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Eq + Serialize + Clon
     {
         Ok(Self { item: item, cache: Arc::new(RwLock::new(Self::init_cache(bootstraps))) })
     } 
-    //TODO: enum for tags, refine send receive logic
     fn build_cache_buf(tag: Tag, own: &Entry<I>, cache: &[Entry<I>; C], to_ignore: SocketAddr, buf: &mut[u8; MAX_DATAGRAM]) -> Result<usize, postcard::Error>
     {
         let mut entries: Vec<&Entry<I>> = cache.iter().filter(|e| e.is_valid() && *e.addr() != to_ignore).collect();
         entries.sort_unstable_by_key(|e| Reverse(e.timestamp()));
         entries.insert(0, own);
-        buf[..tag::TAG_LEN].copy_from_slice(&Into::<[u8; tag::TAG_LEN]>::into(tag));
+        buf[..tag::TAG_LEN].copy_from_slice(Into::<&[u8; tag::TAG_LEN]>::into(tag));
         loop {
             match postcard::to_slice(&entries, &mut buf[tag::TAG_LEN..]) {
                 Ok(out) => return Ok(tag::TAG_LEN + out.len()),
@@ -110,20 +109,15 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Eq + Serialize + Clon
             ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
             loop {
                 let mut buf: [u8; MAX_DATAGRAM] = [0u8; MAX_DATAGRAM];
-                tokio::select! {
+                if let Err(e) = tokio::select! {
                     res = udp.recv_from(&mut buf) => {
                         let (len, sender) = res?;
-                        if let Err(e) = Self::decode(&udp, item.clone(), &buf[..len], &cache, sender).await
-                        {
-                            eprintln!("{e}")
-                        }
+                        Self::decode(&udp, item.clone(), &buf[..len], &cache, sender).await
                     }
-                    _ = ticker.tick() => {
-                        if let Err(e) = Self::send_cache(&udp, item.clone(), &cache).await
-                        {
-                            eprintln!("{e}")
-                        }
-                    }
+                    _ = ticker.tick() => Self::send_cache(&udp, item.clone(), &cache).await.map_err(|e| e.into())
+                }
+                {
+                    eprintln!("{e}");
                 }
             }
         })
