@@ -1,11 +1,11 @@
-use std::{array, cmp::Reverse, collections::HashSet, error::Error, mem, net::{IpAddr, SocketAddr}, range, sync::Arc, time::Duration};
+use std::{array, cmp::Reverse, collections::HashSet, error::Error, mem, net::SocketAddr, sync::Arc, time::Duration};
 use itertools::Itertools;
 use chrono::Utc;
 use rand::seq::IteratorRandom;
 use serde::{Deserialize, Serialize};
 use tokio::{io, net::UdpSocket, sync::RwLock, task::JoinHandle, time::{self, Interval, MissedTickBehavior}};
 
-use crate::{entry::Entry, tag::{self, TAG_LEN, Tag::{self, Plain}}};
+use crate::{entry::Entry, tag::{self, TAG_LEN, Tag::self}};
 
 const MAX_DATAGRAM: usize = 1400;
 
@@ -13,7 +13,7 @@ const MAX_DATAGRAM: usize = 1400;
 /// [Newscast computing]
 /// 
 /// [Newscast computing]: https://www.distributed-systems.net/my-data/papers/wip-newscast.pdf
-struct Newspaper<const C: usize, I> where I: Default + Eq + Serialize + Clone + Send + Sync + 'static, for<'a> I: Deserialize<'a>
+pub struct Newspaper<const C: usize, I> where I: Default + Eq + Serialize + Clone + Send + Sync + 'static, for<'a> I: Deserialize<'a>
 {
     item: I,
     cache: Arc<RwLock<[Entry<I>; C]>>
@@ -71,9 +71,8 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Eq + Serialize + Clon
     fn aggregate(own_cache: [Entry<I>; C], rec_cache: Vec<Entry<I>>) -> [Entry<I>; C]
     {
         let mut new_cache: [Entry<I>; C] = array::from_fn(|_| Entry::<I>::default());
-        let merged = own_cache.into_iter().merge_by(rec_cache.into_iter(), |x, y| x.timestamp() >= y.timestamp());
         let mut seen: HashSet<SocketAddr> = HashSet::new();
-        for (i, e) in merged.filter(|e| e.is_valid() && seen.insert(*e.addr())).take(C).enumerate()
+        for (i, e) in own_cache.into_iter().merge_by(rec_cache.into_iter(), |x, y| x.timestamp() >= y.timestamp()).filter(|e| e.is_valid() && seen.insert(*e.addr())).take(C).enumerate()
         {
             new_cache[i] = e;
         }
