@@ -1,4 +1,4 @@
-use std::{array, cmp::Reverse, collections::HashSet, error::Error, fmt::Debug, mem, net::SocketAddr, sync::Arc, time::Duration};
+use std::{array, cmp::Reverse, collections::HashSet, fmt::Debug, mem, net::SocketAddr, sync::Arc, time::Duration};
 use itertools::Itertools;
 use chrono::Utc;
 use rand::seq::IteratorRandom;
@@ -30,11 +30,11 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Eq + Serialize + Clon
         }
         cache
     }
-    pub fn bind<const B: usize>(item: I, bootstraps: [Entry<I>; B]) -> io::Result<Self>
+    pub fn bind<const B: usize>(item: I, bootstraps: [Entry<I>; B]) -> Self
     {
-        Ok(Self { item: item, cache: Arc::new(RwLock::new(Self::init_cache(bootstraps))) })
+        Self { item: item, cache: Arc::new(RwLock::new(Self::init_cache(bootstraps))) }
     } 
-    fn build_cache_buf(tag: Tag, own: &Entry<I>, cache: &[Entry<I>; C], to_ignore: SocketAddr, buf: &mut[u8; MAX_DATAGRAM]) -> Result<usize, postcard::Error>
+    fn build_cache_buf(tag: Tag, own: &Entry<I>, cache: &[Entry<I>; C], to_ignore: SocketAddr, buf: &mut[u8; MAX_DATAGRAM]) -> postcard::Result<usize>
     {
         let mut entries: Vec<&Entry<I>> = cache.iter().filter(|e| e.is_valid() && *e.addr() != to_ignore).collect();
         entries.sort_unstable_by_key(|e| Reverse(e.timestamp()));
@@ -78,13 +78,13 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Eq + Serialize + Clon
         }
         new_cache
     }
-    fn decode_cache(buf: &[u8]) -> Result<Vec<Entry<I>>, postcard::Error>
+    fn decode_cache(buf: &[u8]) -> postcard::Result<Vec<Entry<I>>>
     {
         let mut rec_cache: Vec<Entry<I>> = postcard::from_bytes(buf)?;
         rec_cache.sort_unstable_by_key(|e| Reverse(e.timestamp()));
         Ok(rec_cache)
     }
-    async fn receive_cache(buf: &[u8], cache: &RwLock<[Entry<I>; C]>) -> Result<(), postcard::Error>
+    async fn receive_cache(buf: &[u8], cache: &RwLock<[Entry<I>; C]>) -> postcard::Result<()>
     {
         let rec_cache: Vec<Entry<I>> =  Self::decode_cache(buf)?;
         let mut guard = cache.write().await;
@@ -114,7 +114,7 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Eq + Serialize + Clon
                         let (len, sender) = res?;
                         Self::decode(&udp, item.clone(), &buf[..len], &cache, sender).await
                     }
-                    _ = ticker.tick() => Self::send_cache(&udp, item.clone(), &cache).await.map_err(|e| e.into())
+                    _ = ticker.tick() => Self::send_cache(&udp, item.clone(), &cache).await
                 }
                 {
                     eprintln!("{e}");
@@ -122,20 +122,19 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Eq + Serialize + Clon
             }
         })
     }
-    async fn decode(socket: &UdpSocket, item: I, buf: &[u8], cache: &RwLock<[Entry<I>; C]>, sender: SocketAddr) -> Result<(), Box<dyn Error>>
+    async fn decode(socket: &UdpSocket, item: I, buf: &[u8], cache: &RwLock<[Entry<I>; C]>, sender: SocketAddr) -> io::Result<()>
     {
-        match Tag::try_from(buf.get(..TAG_LEN).ok_or("Datagram too short")?)? {
+        match Tag::try_from(buf.get(..TAG_LEN).ok_or("Datagram too short").map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))? {
             Tag::Send => {
                 println!("Responding to {sender}");
                 Self::respond_cache(socket, item, sender, &buf[tag::TAG_LEN..], cache).await?
             },
             Tag::Response => {
                 println!("Received response from {sender}");
-                Self::receive_cache(&buf[tag::TAG_LEN..], cache).await?
+                Self::receive_cache(&buf[tag::TAG_LEN..], cache).await.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
             },
             Tag::Plain => todo!()
         };
-        println!("CACHE: {:#?}", cache.read().await.iter().filter(|e| e.is_valid()).collect_vec());
         Ok(())
     }
 }

@@ -25,7 +25,7 @@ async fn main()
             BOOTSTRAP_USER => ([Entry::default()], SocketAddr::from_str(BOOTSTRAP_SOCKET).unwrap()),
             _ => ([Entry::new(SocketAddr::from_str(BOOTSTRAP_SOCKET).unwrap(), 0, BOOTSTRAP_USER.to_owned())], SocketAddr::new(local_ip().unwrap(), 0))
         };
-        let n: Newspaper<C, I> = Newspaper::<C, I>::bind(arg, bootstraps).unwrap();
+        let n: Newspaper<C, I> = Newspaper::<C, I>::bind(arg, bootstraps);
         match n.connect(socket).await {
             Ok(Err(e)) => eprint!("{e}"),
             Err(e) => eprint!("{e}"),
