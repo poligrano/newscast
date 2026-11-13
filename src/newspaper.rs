@@ -51,7 +51,6 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Eq + Serialize + Clon
     }
     fn pick_random_valid_address(cache: &[Entry<I>; C]) -> Option<SocketAddr>
     {
-        println!("{:?}", cache.iter().filter(|e| e.is_valid()).collect_vec());
         cache.iter().filter(|e| e.is_valid()).choose(&mut rand::rng()).map(|e| *e.addr())
     }
     async fn send_cache(socket: &UdpSocket, item: I, cache: &RwLock<[Entry<I>; C]>) -> io::Result<()>
@@ -66,7 +65,7 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Eq + Serialize + Clon
             let len: usize = Self::build_cache_buf(Tag::Send, &Entry::new(socket.local_addr()?, Utc::now().timestamp_millis(), item), &guard, dest, &mut buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
             (dest, len)
         };
-        println!("Dest: {dest}");
+        println!("Sending to {dest}");
         socket.send_to(&buf[..len], dest).await?;
         Ok(())
     }
@@ -132,10 +131,17 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Eq + Serialize + Clon
     async fn decode(socket: &UdpSocket, item: I, buf: &[u8], cache: &RwLock<[Entry<I>; C]>, sender: SocketAddr) -> Result<(), Box<dyn Error>>
     {
         match Tag::try_from(buf.get(..TAG_LEN).ok_or("Datagram too short")?)? {
-            Tag::Send => Self::respond_cache(socket, item, sender, &buf[tag::TAG_LEN..], cache).await?,
-            Tag::Response => Self::receive_cache(&buf[tag::TAG_LEN..], cache).await?,
+            Tag::Send => {
+                println!("Responding to {sender}");
+                Self::respond_cache(socket, item, sender, &buf[tag::TAG_LEN..], cache).await?
+            },
+            Tag::Response => {
+                println!("Received response from {sender}");
+                Self::receive_cache(&buf[tag::TAG_LEN..], cache).await?
+            },
             Tag::Plain => todo!()
         };
+        println!("CACHE: {:#?}", cache.read().await.iter().filter(|e| e.is_valid()).collect_vec());
         Ok(())
     }
 }
