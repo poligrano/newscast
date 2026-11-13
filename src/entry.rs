@@ -1,4 +1,5 @@
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
@@ -29,7 +30,7 @@ impl<I: Default> Entry<I>
     }
     pub fn is_valid(&self) -> bool
     {
-        !self.addr.ip().is_unspecified() || self.addr.port() != 0
+        !self.addr.ip().is_unspecified() && self.addr.port() != 0 && self.timestamp <= Utc::now().timestamp_millis()
     }
 }
 
