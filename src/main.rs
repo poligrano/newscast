@@ -1,7 +1,5 @@
 use std::{env, net::SocketAddr, str::FromStr};
-
 use local_ip_address::local_ip;
-
 use crate::{entry::Entry, newspaper::Newspaper};
 
 mod newspaper;

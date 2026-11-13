@@ -1,10 +1,9 @@
-use std::{array, cmp::Reverse, collections::HashSet, fmt::Debug, mem, net::SocketAddr, sync::Arc, time::Duration};
+use std::{array, cmp::Reverse, collections::HashSet, mem, net::SocketAddr, sync::Arc, time::Duration};
 use itertools::Itertools;
 use chrono::Utc;
 use rand::seq::IteratorRandom;
 use serde::{Deserialize, Serialize};
 use tokio::{io, net::{ToSocketAddrs, UdpSocket}, sync::RwLock, task::JoinHandle, time::{self, Interval, MissedTickBehavior}};
-
 use crate::{entry::Entry, tag::{self, TAG_LEN, Tag::self}};
 
 const MAX_DATAGRAM: usize = 1400;
@@ -13,13 +12,13 @@ const MAX_DATAGRAM: usize = 1400;
 /// [Newscast computing]
 /// 
 /// [Newscast computing]: https://www.distributed-systems.net/my-data/papers/wip-newscast.pdf
-pub struct Newspaper<const C: usize, I> where I: Default + Eq + Serialize + Clone + Send + Sync + Debug + 'static, for<'a> I: Deserialize<'a>
+pub struct Newspaper<const C: usize, I> where I: Default + Clone + Send + Sync + 'static + Serialize, for<'de> I: Deserialize<'de>
 {
     item: I,
     cache: Arc<RwLock<[Entry<I>; C]>>
 }
 
-impl<const C: usize, I> Newspaper<C, I> where I: Default + Eq + Serialize + Clone + Send + Sync + Debug + 'static, for<'a> I: Deserialize<'a>
+impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync + 'static + Serialize, for<'de> I: Deserialize<'de>
 {
     fn init_cache<const B: usize>(bootstraps: [Entry<I>; B]) -> [Entry<I>; C]
     {
@@ -99,6 +98,21 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Eq + Serialize + Clon
         socket.send_to(&to_send[..len], sender).await?;
         Self::receive_cache(buf, cache).await.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
     }
+    async fn decode(socket: &UdpSocket, item: I, buf: &[u8], cache: &RwLock<[Entry<I>; C]>, sender: SocketAddr) -> io::Result<()>
+    {
+        match Tag::try_from(buf.get(..TAG_LEN).ok_or(io::Error::new(io::ErrorKind::InvalidData, tag::Error::new("Datagram too short".to_owned())))?).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))? {
+            Tag::Send => {
+                println!("Responding to {sender}");
+                Self::respond_cache(socket, item, sender, &buf[tag::TAG_LEN..], cache).await?
+            },
+            Tag::Response => {
+                println!("Received response from {sender}");
+                Self::receive_cache(&buf[tag::TAG_LEN..], cache).await.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+            },
+            Tag::Plain => todo!()
+        };
+        Ok(())
+    }
     pub fn connect<A: ToSocketAddrs + Send + Sync + 'static>(&self, socket: A) -> JoinHandle<io::Result<()>>
     {
         let cache: Arc<RwLock<[Entry<I>; C]>> = self.cache.clone();
@@ -121,20 +135,5 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Eq + Serialize + Clon
                 }
             }
         })
-    }
-    async fn decode(socket: &UdpSocket, item: I, buf: &[u8], cache: &RwLock<[Entry<I>; C]>, sender: SocketAddr) -> io::Result<()>
-    {
-        match Tag::try_from(buf.get(..TAG_LEN).ok_or("Datagram too short").map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))? {
-            Tag::Send => {
-                println!("Responding to {sender}");
-                Self::respond_cache(socket, item, sender, &buf[tag::TAG_LEN..], cache).await?
-            },
-            Tag::Response => {
-                println!("Received response from {sender}");
-                Self::receive_cache(&buf[tag::TAG_LEN..], cache).await.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-            },
-            Tag::Plain => todo!()
-        };
-        Ok(())
     }
 }

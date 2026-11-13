@@ -1,6 +1,7 @@
 use crate::tagerror::TagError;
 
 pub const TAG_LEN: usize = 3;
+pub type Error = TagError;
 
 const SEND_BSTR: &[u8; TAG_LEN] = b"SND";
 const RESPONSE_BSTR: &[u8; TAG_LEN] = b"RSP";

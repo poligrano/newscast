@@ -1,16 +1,15 @@
-use std::{fmt::Debug, net::{Ipv4Addr, SocketAddr, SocketAddrV4}};
-
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Entry<I> where I: Default + Debug
+#[derive(Serialize, Deserialize)]
+pub struct Entry<I: Default>
 {
     addr: SocketAddr,
     timestamp: i64,
     item: I
 }
 
-impl<I> Entry<I> where I: Default + Debug
+impl<I: Default> Entry<I>
 {
     pub fn new(addr: SocketAddr, timestamp: i64, item: I) -> Self
     {
@@ -34,7 +33,7 @@ impl<I> Entry<I> where I: Default + Debug
     }
 }
 
-impl<I> Default for Entry<I> where I: Default + Debug
+impl<I: Default> Default for Entry<I>
 {
     fn default() -> Self 
     {
