@@ -2,16 +2,15 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
-#[serde(bound = "I: Default + Eq + Serialize, for<'a> I: Deserialize<'a>")]
-pub struct Entry<I> where I: Default + Eq + Serialize, for<'a> I: Deserialize<'a>
+#[derive(Serialize, Deserialize, PartialEq, Eq)]
+pub struct Entry<I> where I: Default + Eq
 {
     addr: SocketAddr,
     timestamp: i64,
     item: I
 }
 
-impl<I> Entry<I> where I: Default + Eq + Serialize, for<'a> I: Deserialize<'a>
+impl<I> Entry<I> where I: Default + Eq
 {
     pub fn new(addr: SocketAddr, timestamp: i64, item: I) -> Self
     {
@@ -35,7 +34,7 @@ impl<I> Entry<I> where I: Default + Eq + Serialize, for<'a> I: Deserialize<'a>
     }
 }
 
-impl<I> Default for Entry<I> where I: Default + Eq + Serialize, for<'a> I: Deserialize<'a>
+impl<I> Default for Entry<I> where I: Default + Eq
 {
     fn default() -> Self 
     {
