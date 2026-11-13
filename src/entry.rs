@@ -29,7 +29,7 @@ impl<I: Default> Entry<I>
     }
     pub fn is_valid(&self) -> bool
     {
-        !self.addr.ip().is_unspecified() && self.addr.port() != 0
+        !self.addr.ip().is_unspecified() || self.addr.port() != 0
     }
 }
 
@@ -37,6 +37,6 @@ impl<I: Default> Default for Entry<I>
 {
     fn default() -> Self 
     {
-        Self { addr: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)), timestamp: i64::default(), item: I::default() }
+        Self { addr: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0u16)), timestamp: i64::default(), item: I::default() }
     }   
 }

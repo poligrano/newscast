@@ -21,7 +21,7 @@ async fn main()
     {
         let (bootstraps, socket) = match arg.as_str() {
             BOOTSTRAP_USER => ([Entry::default()], SocketAddr::from_str(BOOTSTRAP_SOCKET).unwrap()),
-            _ => ([Entry::new(SocketAddr::from_str(BOOTSTRAP_SOCKET).unwrap(), 0, BOOTSTRAP_USER.to_owned())], SocketAddr::new(local_ip().unwrap(), 0))
+            _ => ([Entry::new(SocketAddr::from_str(BOOTSTRAP_SOCKET).unwrap(), i64::default(), BOOTSTRAP_USER.to_owned())], SocketAddr::new(local_ip().unwrap(), 0u16))
         };
         let n: Newspaper<C, I> = Newspaper::<C, I>::bind(arg, bootstraps);
         match n.connect(socket).await {
