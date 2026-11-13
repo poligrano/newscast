@@ -1,6 +1,6 @@
-use std::{env, io, net::{IpAddr, Ipv4Addr, SocketAddr}};
+use std::{env, net::SocketAddr, str::FromStr};
 
-use tokio::net::UdpSocket;
+use local_ip_address::local_ip;
 
 use crate::{entry::Entry, newspaper::Newspaper};
 
@@ -10,38 +10,30 @@ mod tag;
 mod tagerror;
 
 const C: usize = 20;
+const BOOTSTRAP_SOCKET: &str = "192.168.0.114:20209";
+const BOOTSTRAP_USER: &str = "__boot";
+type I = String;
 
 #[tokio::main]
 async fn main() 
 {
-    let bootstrap = [Entry::new(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 0, 114)), 20209), 0, "__bootstrap".to_owned())];
-    let mut it = env::args();
-    it.next();
-    let arg = it.next().unwrap_or_default();
-    if arg == "boot"
+    let mut it: env::Args = env::args();
+    let program_name: String = it.next().unwrap();
+    if let Some(arg) = it.next()
     {
-        let n = Newspaper::<C, String>::bind("__bootstrap".to_owned(), []).unwrap();
-        match n.connect("192.168.0.114:20209").await {
+        let (bootstraps, socket) = match arg.as_str() {
+            BOOTSTRAP_USER => ([Entry::default()], SocketAddr::from_str(BOOTSTRAP_SOCKET).unwrap()),
+            _ => ([Entry::new(SocketAddr::from_str(BOOTSTRAP_SOCKET).unwrap(), 0, BOOTSTRAP_USER.to_owned())], SocketAddr::new(local_ip().unwrap(), 0))
+        };
+        let n: Newspaper<C, I> = Newspaper::<C, I>::bind(arg, bootstraps).unwrap();
+        match n.connect(socket).await {
             Ok(Err(e)) => eprint!("{e}"),
             Err(e) => eprint!("{e}"),
             Ok(Ok(())) => {}
-        }
+        };
     }
     else 
     {
-        let n = Newspaper::<C, String>::bind(arg, bootstrap).unwrap();
-        match n.connect(SocketAddr::new(get_ip().await.unwrap(), 0)).await {
-            Ok(Err(e)) => eprint!("{e}"),
-            Err(e) => eprint!("{e}"),
-            Ok(Ok(())) => {}
-        }
+        eprintln!("Usage: {program_name} <name> | \"__boot\"");
     }
-}
-
-async fn get_ip() -> io::Result<IpAddr> 
-{
-    let probe = UdpSocket::bind("0.0.0.0:0").await?;
-    probe.connect("8.8.8.8:80").await?;
-    println!("LocalIP: {}", probe.local_addr()?.ip());
-    Ok(probe.local_addr()?.ip())
 }
