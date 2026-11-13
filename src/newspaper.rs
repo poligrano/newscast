@@ -120,6 +120,7 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync +
         tokio::spawn(async move {
             let mut ticker: Interval = time::interval(Duration::from_secs(5));
             let udp: UdpSocket = UdpSocket::bind(socket).await?;
+            println!("Local Addr: {}", udp.local_addr()?);
             ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
             loop {
                 let mut buf: [u8; MAX_DATAGRAM] = [0u8; MAX_DATAGRAM];
