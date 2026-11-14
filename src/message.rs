@@ -10,7 +10,7 @@ pub type Result<T> = result::Result<T, Error>;
 pub(crate) type IdType = u64;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct Message<>
+pub struct Message
 {
     id: IdType,
     ttl: u8,

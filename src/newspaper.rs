@@ -103,28 +103,31 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync +
             }
         }
     }
-    async fn handle_incoming_broad(shared: &Memory<C, I>, sender: SocketAddr, buf: &[u8]) -> postcard::Result<()>
+    async fn handle_incoming_broad(shared: &Arc<Memory<C, I>>, sender: SocketAddr, buf: &[u8]) -> postcard::Result<()>
     {
         let message: Message = postcard::from_bytes(buf)?;
         if message.ttl() > 0 && shared.seen().lock().unwrap_or_else(|e| e.into_inner()).insert(message.id())
         {
             if let Some(fwd) = message.as_forwarded()
             {
-                Self::forward(shared, sender, &fwd).await;
+                let shared: Arc<Memory<C, I>> = shared.clone();
+                tokio::spawn(async move {
+                    Self::forward(&shared, sender, &fwd).await
+                });
             }
-            if let Err(e) = shared.inbox().send(message).await
+            if let Err(e) = shared.inbox().try_send(message)
             {
                 eprintln!("{e}");
             }
         }
         Ok(())
     }
-    async fn decode(shared: &Memory<C, I>, sender: SocketAddr, buf: &[u8]) -> io::Result<()>
+    async fn decode(shared: &Arc<Memory<C, I>>, sender: SocketAddr, buf: &[u8]) -> io::Result<()>
     {
         match Tag::try_from(buf.get(..TAG_LEN).ok_or(io::Error::new(io::ErrorKind::InvalidData, tag::Error::new("Datagram too short".to_owned())))?).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))? {
             Tag::Send => {
                 println!("Responding to {sender}");
-                Self::respond_cache(shared, sender, &buf[tag::TAG_LEN..]).await?
+                Self::respond_cache(shared, sender, &buf[tag::TAG_LEN..]).await?;
             },
             Tag::Response => {
                 println!("Received response from {sender}");
