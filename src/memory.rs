@@ -31,6 +31,7 @@ impl<const C: usize, I: Default + Clone> Memory<C, I>
     {
         Ok(Entry::new(self.udp.local_addr()?, Utc::now().timestamp_millis(), self.id.clone()))
     }
+    #[allow(dead_code)]
     pub fn id(&self) -> &I
     {
         &self.id
