@@ -25,7 +25,7 @@ async fn main()
             BOOTSTRAP_USER => ([Entry::default()], SocketAddr::from_str(BOOTSTRAP_SOCKET).unwrap()),
             _ => ([Entry::new(SocketAddr::from_str(BOOTSTRAP_SOCKET).unwrap(), i64::default(), BOOTSTRAP_USER.to_owned())], SocketAddr::new(local_ip().unwrap(), 0u16))
         };
-        let n: Newspaper<20, String> = Newspaper::<C, I>::bind(arg, socket, bootstraps, CAP).await.unwrap();
+        let n: Newspaper<C, I> = Newspaper::<C, I>::bind(arg, socket, bootstraps, CAP).await.unwrap();
         n.connect();
         let mut lines: io::Lines<BufReader<io::Stdin>> = BufReader::new(io::stdin()).lines();
         loop {

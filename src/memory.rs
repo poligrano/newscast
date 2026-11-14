@@ -15,11 +15,11 @@ pub(crate) struct Memory<const C: usize, I: Default + Clone>
 
 impl<const C: usize, I: Default + Clone> Memory<C, I>
 {
-    fn init_cache<const B: usize>(bootstraps: [Entry<I>; B]) -> [Entry<I>; C]
+    fn init_cache(bootstraps: impl IntoIterator<Item = Entry<I>>) -> [Entry<I>; C]
     {
         bootstraps.into_iter().chain(iter::repeat_with(|| Entry::<I>::default())).take(C).collect_array().unwrap_or(array::from_fn(|_| Entry::<I>::default()))
     }
-    pub async fn new<const B: usize, A: ToSocketAddrs>(id: I, socket: A, bootstraps: [Entry<I>; B], cap: usize) -> io::Result<(Self, Receiver<Message>)>
+    pub async fn new(id: I, socket: impl ToSocketAddrs, bootstraps: impl IntoIterator<Item = Entry<I>>, cap: usize) -> io::Result<(Self, Receiver<Message>)>
     {
         let (inbox, rc) = mpsc::channel(cap);
         UdpSocket::bind(socket).await.map(|udp| (Self { id: id, udp: udp, cache: RwLock::new(Self::init_cache(bootstraps)), seen: Mutex::new(Seen::new(cap)), inbox: inbox }, rc))
@@ -71,9 +71,9 @@ pub mod entry
         {
             Self { addr: addr, timestamp: timestamp, id: id }
         }
-        pub fn addr(&self) -> &SocketAddr
+        pub fn addr(&self) -> SocketAddr
         {
-            &self.addr
+            self.addr
         }
         pub fn timestamp(&self) -> i64
         {

@@ -19,13 +19,13 @@ pub struct Newspaper<const C: usize, I> where I: Default + Clone + Send + Sync +
 
 impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync + 'static + Serialize, for<'de> I: Deserialize<'de>
 {
-    pub async fn bind<const B: usize, A: ToSocketAddrs>(id: I, socket: A, bootstraps: [Entry<I>; B], cap: usize) -> io::Result<Self>
+    pub async fn bind(id: I, socket: impl ToSocketAddrs, bootstraps: impl IntoIterator<Item = Entry<I>>, cap: usize) -> io::Result<Self>
     {
         Memory::new(id, socket, bootstraps, cap).await.map(|(mem, rc)| Self { shared: Arc::new(mem), incoming: Mutex::new(rc) })
     } 
     fn build_cache_buf(tag: Tag, own: &Entry<I>, cache: &[Entry<I>; C], skip: SocketAddr, buf: &mut [u8; MAX_DATAGRAM]) -> postcard::Result<usize>
     {
-        let mut entries: Vec<&Entry<I>> = cache.iter().filter(|e| e.is_valid() && *e.addr() != skip).collect();
+        let mut entries: Vec<&Entry<I>> = cache.iter().filter(|e| e.is_valid() && e.addr() != skip).collect();
         entries.sort_unstable_by_key(|e| Reverse(e.timestamp()));
         entries.insert(0, own);
         buf[..tag::TAG_LEN].copy_from_slice(Into::<&[u8; tag::TAG_LEN]>::into(tag));
@@ -39,7 +39,7 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync +
     }
     fn pick_random_valid_address(cache: &[Entry<I>; C]) -> Option<SocketAddr>
     {
-        cache.iter().filter(|e| e.is_valid()).choose(&mut rand::rng()).map(|e| *e.addr())
+        cache.iter().filter(|e| e.is_valid()).choose(&mut rand::rng()).map(|e| e.addr())
     }
     async fn send_cache(shared: &Memory<C, I>) -> io::Result<()>
     {
@@ -59,7 +59,7 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync +
     fn aggregate(own_cache: [Entry<I>; C], rec_cache: Vec<Entry<I>>, socket: SocketAddr) -> [Entry<I>; C]
     {
         let mut seen: HashSet<SocketAddr> = HashSet::new();
-        own_cache.into_iter().merge_by(rec_cache.into_iter(), |x, y| x.timestamp() >= y.timestamp()).filter(|e| e.is_valid() && *e.addr() != socket && seen.insert(*e.addr())).chain(iter::repeat_with(|| Entry::<I>::default())).take(C).collect_array().unwrap_or(array::from_fn(|_| Entry::<I>::default()))
+        own_cache.into_iter().merge_by(rec_cache.into_iter(), |x, y| x.timestamp() >= y.timestamp()).filter(|e| e.is_valid() && e.addr() != socket && seen.insert(e.addr())).chain(iter::repeat_with(|| Entry::<I>::default())).take(C).collect_array().unwrap_or(array::from_fn(|_| Entry::<I>::default()))
     }
     fn decode_cache(buf: &[u8]) -> postcard::Result<Vec<Entry<I>>>
     {
@@ -93,7 +93,7 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync +
     async fn forward(shared: &Memory<C, I>, sender: SocketAddr, message: &Message)
     {
         const NPEERS: usize = 3;
-        let peers: Vec<SocketAddr> = shared.cache().read().await.iter().filter(|e| e.is_valid() && *e.addr() != sender && *e.addr() != message.origin()).map(|e| *e.addr()).sample(&mut rand::rng(), NPEERS);
+        let peers: Vec<SocketAddr> = shared.cache().read().await.iter().filter(|e| e.is_valid() && e.addr() != sender && e.addr() != message.origin()).map(|e| e.addr()).sample(&mut rand::rng(), NPEERS);
         for dest in peers
         {
             if let Err(e) = Self::send_message(shared, dest, message).await

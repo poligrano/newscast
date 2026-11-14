@@ -64,7 +64,7 @@ mod tagerror
 
     impl TagError
     {
-        pub fn new<T: Into<String>>(desc: T) -> Self
+        pub fn new(desc: impl Into<String>) -> Self
         {
             Self { desc: desc.into() }
         }
