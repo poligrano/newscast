@@ -2,10 +2,10 @@ use std::{array, cmp::Reverse, collections::HashSet, iter, mem, net::{Ipv4Addr, 
 use itertools::Itertools;
 use rand::seq::IteratorRandom;
 use serde::{Deserialize, Serialize};
-use tokio::{io::self, net::ToSocketAddrs, sync::RwLock, task::JoinHandle, time::{self, Interval, MissedTickBehavior}};
-use crate::{memory::{entry::Entry, Memory}, tag::{self, TAG_LEN, Tag::self}};
+use tokio::{io::self, net::ToSocketAddrs, sync::{RwLock, mpsc::Receiver}, task::JoinHandle, time::{self, Interval, MissedTickBehavior}};
+use crate::{memory::{Memory, entry::Entry}, message::{self, Message}, tag::{self, TAG_LEN, Tag::self}};
 
-const MAX_DATAGRAM: usize = 1400;
+pub(crate) const MAX_DATAGRAM: usize = 1400;
 
 /// # Source
 /// [Newscast computing]
@@ -13,14 +13,15 @@ const MAX_DATAGRAM: usize = 1400;
 /// [Newscast computing]: https://www.distributed-systems.net/my-data/papers/wip-newscast.pdf
 pub struct Newspaper<const C: usize, I> where I: Default + Clone + Send + Sync + 'static + Serialize, for<'de> I: Deserialize<'de>
 {
-    shared: Arc<Memory<C, I>>
+    shared: Arc<Memory<C, I>>,
+    incoming: Receiver<Message>
 }
 
 impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync + 'static + Serialize, for<'de> I: Deserialize<'de>
 {
-    pub async fn bind<const B: usize, A: ToSocketAddrs>(id: I, socket: A, bootstraps: [Entry<I>; B]) -> io::Result<Self>
+    pub async fn bind<const B: usize, A: ToSocketAddrs>(id: I, socket: A, bootstraps: [Entry<I>; B], cap: usize) -> io::Result<Self>
     {
-        Ok(Self { shared: Arc::new(Memory::new(id, socket, bootstraps).await?) })
+        Memory::new(id, socket, bootstraps, cap).await.map(|(mem, rc)| Self { shared: Arc::new(mem), incoming: rc })
     } 
     fn build_cache_buf(tag: Tag, own: &Entry<I>, cache: &[Entry<I>; C], skip: SocketAddr, buf: &mut [u8; MAX_DATAGRAM]) -> postcard::Result<usize>
     {
@@ -40,7 +41,7 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync +
     {
         cache.iter().filter(|e| e.is_valid()).choose(&mut rand::rng()).map(|e| *e.addr())
     }
-    async fn send_cache(shared: &Arc<Memory<C, I>>) -> io::Result<()>
+    async fn send_cache(shared: &Memory<C, I>) -> io::Result<()>
     {
         let mut buf: [u8; MAX_DATAGRAM] = [0u8; MAX_DATAGRAM];
         let (dest, len) = {
@@ -75,14 +76,50 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync +
         *guard = Self::aggregate(old, rec_cache, socket);
         Ok(())
     }
-    async fn respond_cache(shared: &Arc<Memory<C, I>>, sender: SocketAddr, buf: &[u8]) -> io::Result<()>
+    async fn respond_cache(shared: &Memory<C, I>, sender: SocketAddr, buf: &[u8]) -> io::Result<()>
     {
         let mut to_send: [u8; MAX_DATAGRAM] = [0u8; MAX_DATAGRAM];
         let len = Self::build_cache_buf(Tag::Response, &shared.build_entry()?, &*shared.cache().read().await, sender, &mut to_send).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         shared.udp().send_to(&to_send[..len], sender).await?;
         Self::receive_cache(shared.cache(), shared.udp().local_addr()?, buf).await.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
     }
-    async fn decode(shared: &Arc<Memory<C, I>>, buf: &[u8], sender: SocketAddr) -> io::Result<()>
+    async fn send_message(shared: &Memory<C, I>, dest: SocketAddr, message: &Message) -> io::Result<()>
+    {
+        let mut buf: [u8; MAX_DATAGRAM] = [0u8; MAX_DATAGRAM];
+        buf[..TAG_LEN].copy_from_slice(Into::<&[u8; TAG_LEN]>::into(Tag::Broad));
+        let n = postcard::to_slice(message, &mut buf[TAG_LEN..]).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?.len();
+        shared.udp().send_to(&buf[..TAG_LEN + n], dest).await?;
+        Ok(())
+    }
+    async fn forward(shared: &Memory<C, I>, sender: SocketAddr, message: &Message)
+    {
+        const NPEERS: usize = 3;
+        let peers: Vec<SocketAddr> = shared.cache().read().await.iter().filter(|e| e.is_valid() && *e.addr() != sender && *e.addr() != message.origin()).map(|e| *e.addr()).sample(&mut rand::rng(), NPEERS);
+        for dest in peers
+        {
+            if let Err(e) = Self::send_message(shared, dest, message).await
+            {
+                eprintln!("{e}")
+            }
+        }
+    }
+    async fn handle_incoming_broad(shared: &Memory<C, I>, sender: SocketAddr, buf: &[u8]) -> postcard::Result<()>
+    {
+        let message: Message = postcard::from_bytes(buf)?;
+        if message.ttl() > 0 && shared.seen().lock().unwrap_or_else(|e| e.into_inner()).insert(message.id())
+        {
+            if let Some(fwd) = message.as_forwarded()
+            {
+                Self::forward(shared, sender, &fwd).await;
+            }
+            if let Err(e) = shared.inbox().send(message).await
+            {
+                eprintln!("{e}");
+            }
+        }
+        Ok(())
+    }
+    async fn decode(shared: &Memory<C, I>, sender: SocketAddr, buf: &[u8]) -> io::Result<()>
     {
         match Tag::try_from(buf.get(..TAG_LEN).ok_or(io::Error::new(io::ErrorKind::InvalidData, tag::Error::new("Datagram too short".to_owned())))?).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))? {
             Tag::Send => {
@@ -93,7 +130,10 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync +
                 println!("Received response from {sender}");
                 Self::receive_cache(shared.cache(), shared.udp().local_addr()?, &buf[tag::TAG_LEN..]).await.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
             },
-            Tag::Plain => todo!()
+            Tag::Broad => {
+                println!("Received broad from {sender}");
+                Self::handle_incoming_broad(shared, sender, &buf[tag::TAG_LEN..]).await.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+            }
         };
         Ok(())
     }
@@ -108,7 +148,7 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync +
                 let mut buf: [u8; MAX_DATAGRAM] = [0u8; MAX_DATAGRAM];
                 if let Err(e) = tokio::select! {
                     res = shared.udp().recv_from(&mut buf) => match res {
-                        Ok((len, sender)) => Self::decode(&shared, &buf[..len], sender).await,
+                        Ok((len, sender)) => Self::decode(&shared, sender, &buf[..len]).await,
                         Err(e) => Err(e)
                     },
                     _ = ticker.tick() => Self::send_cache(&shared).await
@@ -119,5 +159,21 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync +
                 println!("{:?}", shared.cache().read().await.iter().filter(|e| e.is_valid()).map(|e| (e.addr(), e.timestamp())).collect_vec());
             }
         })
+    }
+    fn new_message(&self, content: Vec<u8>) -> io::Result<Message>
+    {
+        const STD_TTL: u8 = 5;
+        Ok(Message::new(STD_TTL, self.shared.udp().local_addr()?, content).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?)
+    }
+    pub async fn broadcast(&mut self, content: Vec<u8>) -> io::Result<()>
+    {
+        let message: Message = self.new_message(content)?;
+        self.shared.seen().lock().unwrap_or_else(|e| e.into_inner()).insert(message.id());
+        Self::forward(&self.shared, self.shared.udp().local_addr()?, &message).await;
+        Ok(())
+    }
+    pub async fn recv(&mut self) -> Option<Message>
+    {
+        self.incoming.recv().await
     }
 }
