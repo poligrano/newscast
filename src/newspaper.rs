@@ -1,4 +1,4 @@
-use std::{array, cmp::Reverse, collections::HashSet, mem, net::SocketAddr, sync::Arc, time::Duration};
+use std::{array, cmp::Reverse, collections::HashSet, mem, net::{Ipv4Addr, SocketAddr, SocketAddrV4}, sync::Arc, time::Duration};
 use itertools::Itertools;
 use chrono::Utc;
 use rand::seq::IteratorRandom;
@@ -15,6 +15,7 @@ const MAX_DATAGRAM: usize = 1400;
 pub struct Newspaper<const C: usize, I> where I: Default + Clone + Send + Sync + 'static + Serialize, for<'de> I: Deserialize<'de>
 {
     id: I,
+    udp: Arc<UdpSocket>,
     cache: Arc<RwLock<[Entry<I>; C]>>
 }
 
@@ -29,9 +30,9 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync +
         }
         cache
     }
-    pub fn bind<const B: usize>(id: I, bootstraps: [Entry<I>; B]) -> Self
+    pub async fn bind<const B: usize, A: ToSocketAddrs>(id: I, socket: A, bootstraps: [Entry<I>; B]) -> io::Result<Self>
     {
-        Self { id: id, cache: Arc::new(RwLock::new(Self::init_cache(bootstraps))) }
+        Ok(Self { id: id, udp: Arc::new(UdpSocket::bind(socket).await?), cache: Arc::new(RwLock::new(Self::init_cache(bootstraps))) })
     } 
     fn build_cache_buf(tag: Tag, own: &Entry<I>, cache: &[Entry<I>; C], to_ignore: SocketAddr, buf: &mut[u8; MAX_DATAGRAM]) -> postcard::Result<usize>
     {
@@ -113,14 +114,14 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync +
         };
         Ok(())
     }
-    pub fn connect<A: ToSocketAddrs + Send + Sync + 'static>(&self, socket: A) -> JoinHandle<io::Result<()>>
+    pub fn connect(&self) -> JoinHandle<()>
     {
         let cache: Arc<RwLock<[Entry<I>; C]>> = self.cache.clone();
         let id: I = self.id.clone();
+        let udp: Arc<UdpSocket> = self.udp.clone();
         tokio::spawn(async move {
             let mut ticker: Interval = time::interval(Duration::from_secs(5));
-            let udp: UdpSocket = UdpSocket::bind(socket).await?;
-            println!("Local Addr: {}", udp.local_addr()?);
+            println!("Local Addr: {}", udp.local_addr().unwrap_or(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0u16))));
             ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
             loop {
                 let mut buf: [u8; MAX_DATAGRAM] = [0u8; MAX_DATAGRAM];
