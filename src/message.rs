@@ -1,4 +1,5 @@
-use std::{net::SocketAddr, result, sync::Arc};
+use std::{net::SocketAddr, result};
+use bytes::Bytes;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use crate::{newspaper, tag::self};
@@ -15,14 +16,15 @@ pub struct Message
     id: IdType,
     ttl: u8,
     origin: SocketAddr,
-    content: Arc<[u8]>
+    content: Bytes
 }
 
 impl Message
 {
-    pub fn new(ttl: u8, origin: SocketAddr, content: Vec<u8>) -> Result<Self>
+    pub fn new(ttl: u8, origin: SocketAddr, content: impl Into<Bytes>) -> Result<Self>
     {
-        (content.len() <= MAX_CONTENT).then(|| Self { id: rand::rng().next_u64(), ttl: ttl, origin: origin, content: Arc::from(content) }).ok_or_else(|| Error::new("Content max length exceeded"))
+        let content: Bytes = content.into();
+        (content.len() <= MAX_CONTENT).then(|| Self { id: rand::rng().next_u64(), ttl: ttl, origin: origin, content: Bytes::from(content) }).ok_or_else(|| Error::new("Content max length exceeded"))
     }
     pub fn as_forwarded(&self) -> Option<Self>
     {
