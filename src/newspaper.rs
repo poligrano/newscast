@@ -159,7 +159,6 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync +
                 {
                     eprintln!("{e}");
                 }
-                println!("{:?}", shared.cache().read().await.iter().filter(|e| e.is_valid()).map(|e| (e.addr(), e.timestamp())).collect_vec());
             }
         })
     }
