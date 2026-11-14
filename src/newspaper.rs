@@ -2,7 +2,7 @@ use std::{array, cmp::Reverse, collections::HashSet, iter, mem, net::{Ipv4Addr, 
 use itertools::Itertools;
 use rand::seq::IteratorRandom;
 use serde::{Deserialize, Serialize};
-use tokio::{io::self, net::ToSocketAddrs, sync::{Mutex, RwLock, mpsc::Receiver}, task::JoinHandle, time::{self, Interval, MissedTickBehavior}};
+use tokio::{io::self, net::ToSocketAddrs, sync::{RwLock, mpsc::Receiver}, task::JoinHandle, time::{self, Interval, MissedTickBehavior}};
 use crate::{memory::{Memory, entry::Entry}, message::Message, tag::{self, TAG_LEN, Tag::self}};
 
 pub(crate) const MAX_DATAGRAM: usize = 1400;
@@ -16,15 +16,17 @@ const FANOUT: usize = 5;
 /// [Newscast computing]: https://www.distributed-systems.net/my-data/papers/wip-newscast.pdf
 pub struct Newspaper<const C: usize, I> where I: Default + Clone + Send + Sync + 'static + Serialize, for<'de> I: Deserialize<'de>
 {
+    // TODO: aggiungere metodo per separare i canali I/O
+    // TODO: migliorare DEBUG info
     shared: Arc<Memory<C, I>>,
-    incoming: Mutex<Receiver<Message>>
+    incoming: Receiver<Message>
 }
 
 impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync + 'static + Serialize, for<'de> I: Deserialize<'de>
 {
     pub async fn bind(id: I, socket: impl ToSocketAddrs, bootstraps: impl IntoIterator<Item = Entry<I>>, cap: usize) -> io::Result<Self>
     {
-        Memory::new(id, socket, bootstraps, cap).await.map(|(shared, incoming)| Self { shared: Arc::new(shared), incoming: Mutex::new(incoming) })
+        Memory::new(id, socket, bootstraps, cap).await.map(|(shared, incoming)| Self { shared: Arc::new(shared), incoming: incoming })
     } 
     fn build_cache_buf(tag: Tag, own: &Entry<I>, cache: &[Entry<I>; C], skip: SocketAddr, buf: &mut [u8; MAX_DATAGRAM]) -> postcard::Result<usize>
     {
@@ -171,8 +173,8 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync +
         Self::forward(&self.shared, self.shared.udp().local_addr()?, &message).await;
         Ok(())
     }
-    pub async fn recv(&self) -> Option<Message>
+    pub async fn recv(&mut self) -> Option<Message>
     {
-        self.incoming.lock().await.recv().await
+        self.incoming.recv().await
     }
 }
