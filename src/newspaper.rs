@@ -24,7 +24,7 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync +
 {
     pub async fn bind(id: I, socket: impl ToSocketAddrs, bootstraps: impl IntoIterator<Item = Entry<I>>, cap: usize) -> io::Result<Self>
     {
-        Memory::new(id, socket, bootstraps, cap).await.map(|(mem, rc)| Self { shared: Arc::new(mem), incoming: Mutex::new(rc) })
+        Memory::new(id, socket, bootstraps, cap).await.map(|(shared, incoming)| Self { shared: Arc::new(shared), incoming: Mutex::new(incoming) })
     } 
     fn build_cache_buf(tag: Tag, own: &Entry<I>, cache: &[Entry<I>; C], skip: SocketAddr, buf: &mut [u8; MAX_DATAGRAM]) -> postcard::Result<usize>
     {

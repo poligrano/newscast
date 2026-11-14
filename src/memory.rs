@@ -21,8 +21,8 @@ impl<const C: usize, I: Default + Clone> Memory<C, I>
     }
     pub async fn new(id: I, socket: impl ToSocketAddrs, bootstraps: impl IntoIterator<Item = Entry<I>>, cap: usize) -> io::Result<(Self, Receiver<Message>)>
     {
-        let (inbox, rc) = mpsc::channel(cap);
-        UdpSocket::bind(socket).await.map(|udp| (Self { id: id, udp: udp, cache: RwLock::new(Self::init_cache(bootstraps)), seen: Mutex::new(Seen::new(cap)), inbox: inbox }, rc))
+        let (inbox, incoming) = mpsc::channel(cap);
+        UdpSocket::bind(socket).await.map(|udp| (Self { id: id, udp: udp, cache: RwLock::new(Self::init_cache(bootstraps)), seen: Mutex::new(Seen::new(cap)), inbox: inbox }, incoming))
     }
     pub fn build_entry(&self) -> io::Result<Entry<I>>
     {
