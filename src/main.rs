@@ -16,7 +16,7 @@ async fn main()
 {
     let mut it: env::Args = env::args();
     let program_name: String = it.next().unwrap();
-    if let Some(arg) = it.next()
+    if let Some(arg) = it.next() && let None = it.next()
     {
         let (bootstraps, socket) = match arg.as_str() {
             BOOTSTRAP_USER => ([Entry::default()], SocketAddr::from_str(BOOTSTRAP_SOCKET).unwrap()),
