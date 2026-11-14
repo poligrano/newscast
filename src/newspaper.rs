@@ -53,7 +53,6 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync +
             let len: usize = Self::build_cache_buf(Tag::Send, &shared.build_entry()?, &guard, dest, &mut buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
             (dest, len)
         };
-        println!("Sending to {dest}");
         shared.udp().send_to(&buf[..len], dest).await?;
         Ok(())
     }
@@ -106,7 +105,7 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync +
     async fn handle_incoming_broad(shared: &Arc<Memory<C, I>>, sender: SocketAddr, buf: &[u8]) -> postcard::Result<()>
     {
         let message: Message = postcard::from_bytes(buf)?;
-        if message.ttl() > 0 && shared.seen().lock().unwrap_or_else(|e| e.into_inner()).insert(message.id())
+        if shared.seen().lock().unwrap_or_else(|e| e.into_inner()).insert(message.id())
         {
             if let Some(fwd) = message.as_forwarded()
             {
@@ -124,17 +123,14 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync +
     }
     async fn decode(shared: &Arc<Memory<C, I>>, sender: SocketAddr, buf: &[u8]) -> io::Result<()>
     {
-        match Tag::try_from(buf.get(..TAG_LEN).ok_or(io::Error::new(io::ErrorKind::InvalidData, tag::Error::new("Datagram too short".to_owned())))?).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))? {
+        match Tag::try_from(buf.get(..TAG_LEN).ok_or(io::Error::new(io::ErrorKind::InvalidData, tag::Error::new("Datagram too short")))?).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))? {
             Tag::Send => {
-                println!("Responding to {sender}");
                 Self::respond_cache(shared, sender, &buf[tag::TAG_LEN..]).await?;
             },
             Tag::Response => {
-                println!("Received response from {sender}");
                 Self::receive_cache(shared.cache(), shared.udp().local_addr()?, &buf[tag::TAG_LEN..]).await.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
             },
             Tag::Broad => {
-                println!("Received broad from {sender}");
                 Self::handle_incoming_broad(shared, sender, &buf[tag::TAG_LEN..]).await.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
             }
         };
