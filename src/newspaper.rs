@@ -7,6 +7,9 @@ use crate::{memory::{Memory, entry::Entry}, message::Message, tag::{self, TAG_LE
 
 pub(crate) const MAX_DATAGRAM: usize = 1400;
 
+const TTL: u8 = 20;
+const FANOUT: usize = 5;
+
 /// # Source
 /// [Newscast computing]
 /// 
@@ -92,8 +95,7 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync +
     }
     async fn forward(shared: &Memory<C, I>, sender: SocketAddr, message: &Message)
     {
-        const NPEERS: usize = 3;
-        let peers: Vec<SocketAddr> = shared.cache().read().await.iter().filter(|e| e.is_valid() && e.addr() != sender && e.addr() != message.origin()).map(|e| e.addr()).sample(&mut rand::rng(), NPEERS);
+        let peers: Vec<SocketAddr> = shared.cache().read().await.iter().filter(|e| e.is_valid() && e.addr() != sender && e.addr() != message.origin()).map(|e| e.addr()).sample(&mut rand::rng(), FANOUT);
         for dest in peers
         {
             if let Err(e) = Self::send_message(shared, dest, message).await
@@ -160,8 +162,7 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync +
     }
     fn new_message(&self, content: Vec<u8>) -> io::Result<Message>
     {
-        const STD_TTL: u8 = 5;
-        Ok(Message::new(STD_TTL, self.shared.udp().local_addr()?, content).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?)
+        Ok(Message::new(TTL, self.shared.udp().local_addr()?, content).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?)
     }
     pub async fn broadcast(&self, content: Vec<u8>) -> io::Result<()>
     {
