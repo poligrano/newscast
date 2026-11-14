@@ -2,8 +2,8 @@ use std::{array, cmp::Reverse, collections::HashSet, iter, mem, net::{Ipv4Addr, 
 use itertools::Itertools;
 use rand::seq::IteratorRandom;
 use serde::{Deserialize, Serialize};
-use tokio::{io, net::ToSocketAddrs, sync::RwLock, task::JoinHandle, time::{self, Interval, MissedTickBehavior}};
-use crate::{memory::entry::Entry, memory::Memory, tag::{self, TAG_LEN, Tag::self}};
+use tokio::{io::self, net::ToSocketAddrs, sync::RwLock, task::JoinHandle, time::{self, Interval, MissedTickBehavior}};
+use crate::{memory::{entry::Entry, Memory}, tag::{self, TAG_LEN, Tag::self}};
 
 const MAX_DATAGRAM: usize = 1400;
 
@@ -95,7 +95,6 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync +
             },
             Tag::Plain => todo!()
         };
-        println!("{:?}", shared.cache().read().await.iter().filter(|e| e.is_valid()).map(|e| (e.addr(), e.timestamp())).collect_vec());
         Ok(())
     }
     pub fn connect(&self) -> JoinHandle<()>
@@ -117,6 +116,7 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync +
                 {
                     eprintln!("{e}");
                 }
+                println!("{:?}", shared.cache().read().await.iter().filter(|e| e.is_valid()).map(|e| (e.addr(), e.timestamp())).collect_vec());
             }
         })
     }

@@ -1,6 +1,7 @@
-use std::{array, io};
+use std::{array, io, iter};
 
 use chrono::Utc;
+use itertools::Itertools;
 use tokio::{net::{ToSocketAddrs, UdpSocket}, sync::RwLock};
 
 use crate::memory::entry::Entry;
@@ -16,12 +17,7 @@ impl<const C: usize, I: Default + Clone> Memory<C, I>
 {
     fn init_cache<const B: usize>(bootstraps: [Entry<I>; B]) -> [Entry<I>; C]
     {
-        let mut cache: [Entry<I>; C] = array::from_fn(|_| Entry::<I>::default());
-        for (i, e) in bootstraps.into_iter().take(C).enumerate()
-        {
-            cache[i] = e;
-        }
-        cache
+        bootstraps.into_iter().chain(iter::repeat_with(|| Entry::<I>::default())).take(C).collect_array().unwrap_or(array::from_fn(|_| Entry::<I>::default()))
     }
     pub async fn new<const B: usize, A: ToSocketAddrs>(id: I, socket: A, bootstraps: [Entry<I>; B]) -> io::Result<Self>
     {
