@@ -1,9 +1,9 @@
 use std::{env, net::SocketAddr, str::FromStr};
 use local_ip_address::local_ip;
-use crate::{entry::Entry, newspaper::Newspaper};
+use crate::{memory::entry::Entry, newspaper::Newspaper};
 
 pub mod newspaper;
-pub mod entry;
+pub mod memory;
 mod tag;
 
 const C: usize = 20;
