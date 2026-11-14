@@ -2,8 +2,8 @@ use std::{array, cmp::Reverse, collections::HashSet, iter, mem, net::{Ipv4Addr, 
 use itertools::Itertools;
 use rand::seq::IteratorRandom;
 use serde::{Deserialize, Serialize};
-use tokio::{io::self, net::ToSocketAddrs, sync::{RwLock, mpsc::Receiver}, task::JoinHandle, time::{self, Interval, MissedTickBehavior}};
-use crate::{memory::{Memory, entry::Entry}, message::{self, Message}, tag::{self, TAG_LEN, Tag::self}};
+use tokio::{io::self, net::ToSocketAddrs, sync::{Mutex, RwLock, mpsc::Receiver}, task::JoinHandle, time::{self, Interval, MissedTickBehavior}};
+use crate::{memory::{Memory, entry::Entry}, message::Message, tag::{self, TAG_LEN, Tag::self}};
 
 pub(crate) const MAX_DATAGRAM: usize = 1400;
 
@@ -14,14 +14,14 @@ pub(crate) const MAX_DATAGRAM: usize = 1400;
 pub struct Newspaper<const C: usize, I> where I: Default + Clone + Send + Sync + 'static + Serialize, for<'de> I: Deserialize<'de>
 {
     shared: Arc<Memory<C, I>>,
-    incoming: Receiver<Message>
+    incoming: Mutex<Receiver<Message>>
 }
 
 impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync + 'static + Serialize, for<'de> I: Deserialize<'de>
 {
     pub async fn bind<const B: usize, A: ToSocketAddrs>(id: I, socket: A, bootstraps: [Entry<I>; B], cap: usize) -> io::Result<Self>
     {
-        Memory::new(id, socket, bootstraps, cap).await.map(|(mem, rc)| Self { shared: Arc::new(mem), incoming: rc })
+        Memory::new(id, socket, bootstraps, cap).await.map(|(mem, rc)| Self { shared: Arc::new(mem), incoming: Mutex::new(rc) })
     } 
     fn build_cache_buf(tag: Tag, own: &Entry<I>, cache: &[Entry<I>; C], skip: SocketAddr, buf: &mut [u8; MAX_DATAGRAM]) -> postcard::Result<usize>
     {
@@ -165,15 +165,15 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync +
         const STD_TTL: u8 = 5;
         Ok(Message::new(STD_TTL, self.shared.udp().local_addr()?, content).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?)
     }
-    pub async fn broadcast(&mut self, content: Vec<u8>) -> io::Result<()>
+    pub async fn broadcast(&self, content: Vec<u8>) -> io::Result<()>
     {
         let message: Message = self.new_message(content)?;
         self.shared.seen().lock().unwrap_or_else(|e| e.into_inner()).insert(message.id());
         Self::forward(&self.shared, self.shared.udp().local_addr()?, &message).await;
         Ok(())
     }
-    pub async fn recv(&mut self) -> Option<Message>
+    pub async fn recv(&self) -> Option<Message>
     {
-        self.incoming.recv().await
+        self.incoming.lock().await.recv().await
     }
 }

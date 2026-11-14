@@ -1,6 +1,6 @@
 use std::{env, net::SocketAddr, str::FromStr};
 use local_ip_address::local_ip;
-use tokio::io::{self, AsyncReadExt};
+use tokio::{io::{self, AsyncBufReadExt, BufReader}, select};
 use crate::{memory::entry::Entry, newspaper::Newspaper};
 
 pub mod newspaper;
@@ -25,24 +25,31 @@ async fn main()
             BOOTSTRAP_USER => ([Entry::default()], SocketAddr::from_str(BOOTSTRAP_SOCKET).unwrap()),
             _ => ([Entry::new(SocketAddr::from_str(BOOTSTRAP_SOCKET).unwrap(), i64::default(), BOOTSTRAP_USER.to_owned())], SocketAddr::new(local_ip().unwrap(), 0u16))
         };
-        let mut n: Newspaper<C, I> = Newspaper::<C, I>::bind(arg, socket, bootstraps, CAP).await.unwrap();
-        let handle = n.connect();
-        n.broadcast(read_input().into()).await.unwrap();
-        while let Some(mx) = n.recv().await
-        {
-            println!("\n\n{:#?}{}\n\n", mx, String::from_utf8_lossy(mx.content()));
+        let n = Newspaper::<C, I>::bind(arg, socket, bootstraps, CAP).await.unwrap();
+        let _ = n.connect();
+        let mut lines = BufReader::new(io::stdin()).lines();
+        loop {
+            select! {
+                mx = n.recv() => {
+                    if let Some(mx) = mx 
+                    {
+                        println!("\n{:#?}\n{}\n", mx, String::from_utf8_lossy(mx.content()));
+                    }
+                }
+                line = lines.next_line() => match line {
+                    Ok(Some(l)) => {
+                        if let Err(e) = n.broadcast(l.into_bytes()).await 
+                        { 
+                            eprintln!("{e}"); 
+                        }
+                    }
+                    _ => break
+                }
+            }
         }
-        handle.await.unwrap();
     }
     else 
     {
         eprintln!("Usage: {program_name} <name> | \"__boot\"");
     }
-}
-
-fn read_input() -> String
-{
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input).unwrap();
-    input
 }
