@@ -8,6 +8,7 @@ const SEND_BSTR: &[u8; TAG_LEN] = b"SND";
 const RESPONSE_BSTR: &[u8; TAG_LEN] = b"RSP";
 const BROAD_BSTR: &[u8; TAG_LEN] = b"BRD";
 
+#[derive(Debug)]
 pub enum Tag
 {
     Send,

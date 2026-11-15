@@ -57,7 +57,7 @@ pub mod entry
     use chrono::Utc;
     use serde::{Deserialize, Serialize};
 
-    #[derive(Serialize, Deserialize)]
+    #[derive(Serialize, Deserialize, Debug)]
     pub struct Entry<I: Default>
     {
         addr: SocketAddr,

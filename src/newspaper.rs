@@ -13,7 +13,6 @@ const FANOUT: usize = 5;
 /// [Newscast computing]: https://www.distributed-systems.net/my-data/papers/wip-newscast.pdf
 pub struct Newspaper<const C: usize, I> where I: Default + Clone + Send + Sync + 'static + Serialize, for<'de> I: Deserialize<'de>
 {
-    // TODO: migliorare DEBUG info
     output: Output<C, I>,
     input: Input
 }
@@ -72,6 +71,7 @@ pub mod output
     use rand::seq::IteratorRandom;
     use serde::{Deserialize, Serialize};
     use tokio::{io, net::ToSocketAddrs, sync::{RwLock, mpsc::Receiver}, task::JoinHandle, time::{self, Interval, MissedTickBehavior}};
+    use tracing::{info, warn};
     use crate::{memory::{Memory, entry::Entry}, message::Message, newspaper::{FANOUT, MAX_DATAGRAM, TTL}, tag::{self, Tag}};
 
     pub struct Output<const C: usize, I> where I: Default + Clone + Send + Sync + 'static + Serialize, for<'de> I: Deserialize<'de>
@@ -115,6 +115,7 @@ pub mod output
                 let len: usize = Self::build_cache_buf(Tag::Send, &shared.build_entry()?, &guard, dest, &mut buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
                 (dest, len)
             };
+            info!(%dest, tag = ?Tag::Send);
             shared.udp().send_to(&buf[..len], dest).await?;
             Ok(())
         }
@@ -159,13 +160,14 @@ pub mod output
             {
                 if let Err(e) = Self::send_message(shared, dest, message).await
                 {
-                    eprintln!("{e}")
+                    warn!(warning = %e);
                 }
             }
         }
         async fn handle_incoming_broad(shared: &Arc<Memory<C, I>>, sender: SocketAddr, buf: &[u8]) -> postcard::Result<()>
         {
             let message: Message = postcard::from_bytes(buf)?;
+            info!(?message, %sender);
             if shared.seen().lock().unwrap_or_else(|e| e.into_inner()).insert(message.id())
             {
                 if let Some(fwd) = message.as_forwarded()
@@ -177,7 +179,7 @@ pub mod output
                 }
                 if let Err(e) = shared.inbox().try_send(message)
                 {
-                    eprintln!("{e}");
+                    warn!(warning = %e);
                 }
             }
             Ok(())
@@ -186,9 +188,11 @@ pub mod output
         {
             match Tag::try_from(buf.get(..tag::TAG_LEN).ok_or(io::Error::new(io::ErrorKind::InvalidData, tag::Error::new("Datagram too short")))?).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))? {
                 Tag::Send => {
+                    info!(%sender, tag = ?Tag::Send);
                     Self::respond_cache(shared, sender, &buf[tag::TAG_LEN..]).await?;
                 },
                 Tag::Response => {
+                    info!(%sender, tag = ?Tag::Response);
                     Self::receive_cache(shared.cache(), shared.udp().local_addr()?, &buf[tag::TAG_LEN..]).await.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
                 },
                 Tag::Broad => {
@@ -202,7 +206,7 @@ pub mod output
             let shared: Arc<Memory<C, I>> = self.shared.clone();
             tokio::spawn(async move {
                 let mut ticker: Interval = time::interval(Duration::from_secs(5));
-                println!("Local Addr: {}", shared.udp().local_addr().unwrap_or(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0u16))));
+                info!(local_address = %shared.udp().local_addr().unwrap_or(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0u16))));
                 ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
                 loop {
                     let mut buf: [u8; MAX_DATAGRAM] = [0u8; MAX_DATAGRAM];
@@ -214,7 +218,7 @@ pub mod output
                         _ = ticker.tick() => Self::send_cache(&shared).await
                     }
                     {
-                        eprintln!("{e}");
+                        warn!(warning = %e)
                     }
                 }
             })
