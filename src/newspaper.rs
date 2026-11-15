@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use serde::{Deserialize, Serialize};
 use tokio::{io::self, net::ToSocketAddrs, task::JoinHandle};
 use crate::{memory::entry::Entry, message::Message, newspaper::{input::Input, output::Output}};
@@ -38,6 +39,10 @@ impl<const C: usize, I> Newspaper<C, I> where I: Default + Clone + Send + Sync +
     pub async fn recv(&mut self) -> Option<Message>
     {
         self.input.recv().await
+    }
+    pub async fn peers(&self) -> Vec<(SocketAddr, I)>
+    {
+        self.output.peers().await
     }
 }
 
@@ -222,6 +227,10 @@ pub mod output
                     }
                 }
             })
+        }
+        pub async fn peers(&self) -> Vec<(SocketAddr, I)>
+        {
+            self.shared.cache().read().await.iter().filter(|e| e.is_valid()).map(|e| (e.addr(), e.id().clone())).collect()
         }
         fn new_message(&self, content: Vec<u8>) -> io::Result<Message>
         {

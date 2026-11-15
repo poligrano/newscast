@@ -1,100 +1,92 @@
-use std::{env, net::SocketAddr, str::FromStr, io::Write};
+use std::{env, net::SocketAddr, str::FromStr, time::Duration};
 use chrono::Utc;
+use crossterm::event::{Event as CEvent, EventStream, KeyEventKind};
+use futures::StreamExt;
 use local_ip_address::local_ip;
-use rustyline_async::{Readline, ReadlineEvent, SharedWriter};
-use tokio::{io, task::JoinHandle};
-use tracing::{error, warn};
-use crate::{memory::entry::Entry, message::Message, newspaper::Newspaper};
+use ratatui::DefaultTerminal;
+use tokio::io;
+use tracing_appender::rolling::RollingFileAppender;
+use crate::{app::{Action, App}, memory::entry::Entry, newspaper::Newspaper};
 
+mod app;
+mod ui;
 pub mod newspaper;
 pub mod memory;
 mod message;
 mod tag;
 
 const C: usize = 20;
-type I = String;
-
 const CAP: usize = 1024;
+type I = String;
 
 const BOOTSTRAP_SOCKET: &str = "192.168.0.114:20209";
 const BOOTSTRAP_USER: &str = "__boot";
 
 #[tokio::main]
-async fn main() 
+async fn main() -> io::Result<()>
 {
-    let (mut rl, mut out) = Readline::new("> ".to_owned()).unwrap();
-    let mut it: env::Args = env::args();
-    let program_name: String = it.next().unwrap_or("newspaper".to_owned());
-    init_tracing(out.clone());
-    if let (Some(arg), None) = (it.next(), it.next())
-    {
-        match app_loop(arg, &mut rl, &mut out).await {
-            Ok(()) => {},
-            Err(e) => error!(error = %e)
-        }
-    }
-    else 
-    {
-        writeln!(out, "Usage: {program_name} <name> | \"__boot\"").ok();
-    }
-}
-
-fn pretty_print_message(mx: &Message) -> String
-{
-    format!(
-r#"
------NEW MESSAGE-----
-  id: {}
-  ttl: {}
-  from: {}
-
-  {}
-
------END MESSAGE-----
-"#, mx.id(), mx.ttl(), mx.origin(), String::from_utf8_lossy(mx.content()))
-}
-
-async fn build_newspaper(arg: String)  -> io::Result<Newspaper<C, I>>
-{
-    let (bootstraps, socket) = match arg.as_str() {
-        BOOTSTRAP_USER => ([Entry::default()], SocketAddr::from_str(BOOTSTRAP_SOCKET).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?),
-        _ => ([Entry::new(SocketAddr::from_str(BOOTSTRAP_SOCKET).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?, Utc::now().timestamp_millis(), BOOTSTRAP_USER.to_owned())], SocketAddr::new(local_ip().map_err(|e| io::Error::new(io::ErrorKind::AddrNotAvailable, e))?, 0u16))
+    let mut args = env::args();
+    let prog = args.next().unwrap_or_else(|| "newspaper".into());
+    let (Some(name), None) = (args.next(), args.next()) else {
+        eprintln!("Usage: {prog} <name> | \"{BOOTSTRAP_USER}\"");
+        return Ok(());
     };
-    Newspaper::<C, I>::bind(arg, socket, bootstraps, CAP).await
+    let log: RollingFileAppender = tracing_appender::rolling::never(".", format!("newscast-{name}.log"));
+    tracing_subscriber::fmt().with_writer(log).with_ansi(false).init();
+    let n: Newspaper<C, I> = build_newspaper(name.clone()).await?;
+    let mut terminal = ratatui::init();
+    let res: Result<(), io::Error> = run(&mut terminal, n, name).await;
+    ratatui::restore();
+    res
 }
 
-fn init_tracing(wr: SharedWriter)
+async fn build_newspaper(name: String) -> io::Result<Newspaper<C, I>>
 {
-    tracing_subscriber::fmt().with_writer(move || wr.clone()).with_ansi(true).init();
+    let boot: SocketAddr = SocketAddr::from_str(BOOTSTRAP_SOCKET).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+    let (bootstraps, socket) = if name == BOOTSTRAP_USER {
+        ([Entry::default()], boot)
+    } else {
+        ([Entry::new(boot, Utc::now().timestamp_millis(), BOOTSTRAP_USER.to_owned())], SocketAddr::new(local_ip().map_err(|e| io::Error::new(io::ErrorKind::AddrNotAvailable, e))?, 0))
+    };
+    Newspaper::<C, I>::bind(name, socket, bootstraps, CAP).await
 }
 
-async fn app_loop(arg: String, rl: &mut Readline, out: &mut SharedWriter) -> io::Result<()>
+async fn run(terminal: &mut DefaultTerminal, mut n: Newspaper<C, I>, name: String) -> io::Result<()>
 {
-    let mut n: Newspaper<C, I> = build_newspaper(arg).await?;
-    let mut handle: JoinHandle<()> = n.connect();
+    let mut app = App::new(name);
+    let mut net = n.connect();
+    let mut keys = EventStream::new();
+    let mut tick = tokio::time::interval(Duration::from_millis(500));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
+        terminal.draw(|f| ui::draw(f, &mut app))?;
         tokio::select! {
-            mx = n.recv() => match mx {
-                Some(mx) => { writeln!(out, "{}", pretty_print_message(&mx)).ok(); },
-                None => break
-            },
-            ev = rl.readline() => match ev {
-                Ok(ReadlineEvent::Line(l)) => {
-                    rl.add_history_entry(l.clone());
-                    if let Err(e) = n.broadcast(l.into_bytes()).await 
-                    {
-                        error!(error = %e);
+            Some(Ok(ev)) = keys.next() => {
+                if let CEvent::Key(k) = ev && k.kind == KeyEventKind::Press {
+                    match app.on_key(k) {
+                        Action::Quit => break,
+                        Action::Send(text) => match n.broadcast(text.clone().into_bytes()).await {
+                            Ok(()) => app.push(None, text),
+                            Err(e) => app.push(None, format!("[send error: {e}]")),
+                        },
+                        Action::None => {}
                     }
                 }
-                Ok(ReadlineEvent::Eof | ReadlineEvent::Interrupted) | Err(_) => break,
+            }
+            mx = n.recv() => match mx {
+                Some(m) => app.push(Some(m.origin()), String::from_utf8_lossy(m.content()).into_owned()),
+                None => break,
             },
-            _ = &mut handle => {
-                warn!("DISCONNECTED");
+            _ = tick.tick() => { app.peers = n.peers().await; }
+            _ = &mut net => {
+                app.connected = false;
+                app.push(None, "[disconnected]".into());
+                terminal.draw(|f| ui::draw(f, &mut app))?;
+                let _ = keys.next().await;
                 break;
             }
         }
     }
-    rl.flush().ok();
-    handle.abort();
+    net.abort();
     Ok(())
 }
