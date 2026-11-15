@@ -57,8 +57,9 @@ fn pretty_print_message(mx: &Message) -> String
 r#"
 -----NEW MESSAGE-----
   id: {}
+  ttl: {}
   from: {}
 
   {}
-"#, mx.id(), mx.origin(), String::from_utf8_lossy(mx.content()))
+"#, mx.id(), mx.ttl(), mx.origin(), String::from_utf8_lossy(mx.content()))
 }
