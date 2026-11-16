@@ -1,4 +1,4 @@
-use std::{env, net::SocketAddr, time::Duration};
+use std::{env, net::SocketAddr, str::FromStr, time::Duration};
 use chrono::Utc;
 use crossterm::event::{Event as CEvent, EventStream, KeyEventKind};
 use futures::StreamExt;
@@ -6,7 +6,7 @@ use local_ip_address::local_ip;
 use ratatui::DefaultTerminal;
 use tokio::io;
 use tracing_appender::rolling::RollingFileAppender;
-use trust_dns_resolver::Resolver;
+use trust_dns_resolver::{Resolver, TokioAsyncResolver, config::{ResolverConfig, ResolverOpts}};
 use crate::{app::{Action, App}, memory::entry::Entry, newspaper::Newspaper};
 
 mod app;
@@ -44,11 +44,11 @@ async fn main() -> io::Result<()>
 
 async fn build_newspaper(name: String) -> io::Result<Newspaper<C, I>>
 {
-    let boot: SocketAddr = socket_as_bootstrap()?;
+    let boot: SocketAddr = SocketAddr::from_str(&format!("127.0.0.1:{BOOTSTRAP_PORT}")).map_err(|e| io::Error::new(io::ErrorKind::AddrNotAvailable, e))?;
     let (bootstraps, socket) = if name == BOOTSTRAP_USER {
         ([Entry::default()], boot)
     } else {
-        ([Entry::new(boot, Utc::now().timestamp_millis(), BOOTSTRAP_USER.to_owned())], SocketAddr::new(local_ip().map_err(|e| io::Error::new(io::ErrorKind::AddrNotAvailable, e))?, 0))
+        ([Entry::new(socket_as_bootstrap().await?, Utc::now().timestamp_millis(), BOOTSTRAP_USER.to_owned())], SocketAddr::new(local_ip().map_err(|e| io::Error::new(io::ErrorKind::AddrNotAvailable, e))?, 0))
     };
     Newspaper::<C, I>::bind(name, socket, bootstraps, CAP).await
 }
@@ -93,7 +93,7 @@ async fn run(terminal: &mut DefaultTerminal, mut n: Newspaper<C, I>, name: Strin
     Ok(())
 }
 
-fn socket_as_bootstrap() -> io::Result<SocketAddr>
+async fn socket_as_bootstrap() -> io::Result<SocketAddr>
 {
-    Ok(SocketAddr::new(Resolver::default()?.lookup_ip(BOOTSTRAP_NAME)?.iter().next().unwrap(), BOOTSTRAP_PORT))
+    Ok(SocketAddr::new(TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default()).lookup_ip(BOOTSTRAP_NAME).await?.iter().next().unwrap(), BOOTSTRAP_PORT))
 }
