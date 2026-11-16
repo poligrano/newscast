@@ -1,4 +1,4 @@
-use std::{env, net::SocketAddr, str::FromStr, time::Duration};
+use std::{env, net::SocketAddr, time::Duration};
 use chrono::Utc;
 use crossterm::event::{Event as CEvent, EventStream, KeyEventKind};
 use futures::StreamExt;
@@ -6,6 +6,7 @@ use local_ip_address::local_ip;
 use ratatui::DefaultTerminal;
 use tokio::io;
 use tracing_appender::rolling::RollingFileAppender;
+use trust_dns_resolver::Resolver;
 use crate::{app::{Action, App}, memory::entry::Entry, newspaper::Newspaper};
 
 mod app;
@@ -19,7 +20,8 @@ const C: usize = 20;
 const CAP: usize = 1024;
 type I = String;
 
-const BOOTSTRAP_SOCKET: &str = "192.168.0.114:20209";
+const BOOTSTRAP_NAME: &str = "newscast.duckdns.org";
+const BOOTSTRAP_PORT: u16 = 42586;
 const BOOTSTRAP_USER: &str = "__boot";
 
 #[tokio::main]
@@ -42,7 +44,7 @@ async fn main() -> io::Result<()>
 
 async fn build_newspaper(name: String) -> io::Result<Newspaper<C, I>>
 {
-    let boot: SocketAddr = SocketAddr::from_str(BOOTSTRAP_SOCKET).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+    let boot: SocketAddr = socket_as_bootstrap()?;
     let (bootstraps, socket) = if name == BOOTSTRAP_USER {
         ([Entry::default()], boot)
     } else {
@@ -89,4 +91,9 @@ async fn run(terminal: &mut DefaultTerminal, mut n: Newspaper<C, I>, name: Strin
     }
     net.abort();
     Ok(())
+}
+
+fn socket_as_bootstrap() -> io::Result<SocketAddr>
+{
+    Ok(SocketAddr::new(Resolver::default()?.lookup_ip(BOOTSTRAP_NAME)?.iter().next().unwrap(), BOOTSTRAP_PORT))
 }
